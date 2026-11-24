@@ -311,6 +311,50 @@ jobs:
         if: ${{ inputs.ytuhd }}
         run: |
           cd YTUHD
+          toolchain_bin="$THEOS/toolchain/linux/iphone/bin"
+          sdk_path=$(find "$THEOS/sdks" -maxdepth 1 -type d -name 'iPhoneOS*.sdk' -print -quit)
+          if [ ! -d "$sdk_path" ] || [ ! -d "$toolchain_bin" ]; then
+            echo "::error::Theos iOS SDK or Linux toolchain was not found."
+            exit 1
+          fi
+
+          compat_bin="$RUNNER_TEMP/ytuhd-compat-bin"
+          mkdir -p "$compat_bin"
+          cat > "$compat_bin/xcrun" <<'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+
+          if [[ " $* " == *" --show-sdk-path "* ]]; then
+            printf '%s\n' "$SDKROOT"
+            exit 0
+          fi
+
+          if [[ " $* " == *" --find "* ]]; then
+            tool="${@: -1}"
+            case "$tool" in
+              ar) tool=llvm-ar ;;
+              strip) tool=llvm-strip ;;
+              nm) tool=llvm-nm ;;
+            esac
+            command -v "$tool"
+            exit
+          fi
+
+          echo "::error::Unsupported xcrun invocation: $*" >&2
+          exit 1
+          EOF
+          cat > "$compat_bin/sysctl" <<'EOF'
+          #!/usr/bin/env bash
+          if [[ "$1" == "-n" && "$2" == "hw.ncpu" ]]; then
+            nproc
+          else
+            exec /usr/sbin/sysctl "$@"
+          fi
+          EOF
+          chmod +x "$compat_bin/xcrun" "$compat_bin/sysctl"
+          export SDKROOT="$sdk_path"
+          export PATH="$compat_bin:$toolchain_bin:$PATH"
+
           brew install meson ninja
           make libvpx dav1d
           make clean package DEBUG=0 FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless SIDELOAD=1
